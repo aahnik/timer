@@ -81,6 +81,8 @@ import kotlin.math.sin
 private const val MAX_MINUTES = 60
 private const val TACHOMETER_START = -135f
 private const val TACHOMETER_SPAN = 270f
+private const val FLOOD_PORTRAIT_SCALE_SPAN = 0.76f
+private const val FLOOD_LANDSCAPE_SCALE_SPAN = 0.84f
 
 private enum class DragMode { Rotate, Vertical }
 
@@ -345,6 +347,14 @@ private fun TimerScreen(
     }
 
     fun dragBy(previous: Offset, current: Offset, area: IntSize, pixelsPerMinute: Float) {
+        if (dialStyle == DialStyle.Flood) {
+            if (area.width > area.height) {
+                applyDragMinutes((previous.x - current.x) / (area.width * FLOOD_LANDSCAPE_SCALE_SPAN / MAX_MINUTES))
+            } else {
+                applyDragMinutes((previous.y - current.y) / (area.height * FLOOD_PORTRAIT_SCALE_SPAN / MAX_MINUTES))
+            }
+            return
+        }
         when (dialStyle.dragMode) {
             DragMode.Vertical -> applyDragMinutes((previous.y - current.y) / pixelsPerMinute)
             DragMode.Rotate -> {
@@ -702,11 +712,11 @@ private fun rollingValue(value: Float, rollPortion: Float): Float {
 
 private fun DrawScope.drawFlood(frame: DialFrame) {
     val landscape = size.width > size.height
-    val scaleTop = size.height * 0.14f
     val scaleBottom = size.height * 0.9f
+    val scaleTop = scaleBottom - size.height * FLOOD_PORTRAIT_SCALE_SPAN
     val scaleLeft = 24.dp.toPx()
-    val scaleStart = size.width * 0.08f
-    val scaleEnd = size.width * 0.92f
+    val scaleStart = size.width * (1f - FLOOD_LANDSCAPE_SCALE_SPAN) / 2
+    val scaleEnd = size.width - scaleStart
     val scaleBase = size.height - 24.dp.toPx()
     val levelY = size.height * (1f - frame.floodLevel)
     val waveLength = 48.dp.toPx()
