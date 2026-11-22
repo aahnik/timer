@@ -80,7 +80,7 @@ private const val MAX_MINUTES = 60
 private const val TACHOMETER_START = -135f
 private const val TACHOMETER_SPAN = 270f
 private const val FLOOD_SCALE_SPAN = 0.76f
-private const val ROLL_DEAD_ZONE = 15f
+private const val ROLL_DEAD_ZONE = 40f
 
 private enum class DragMode { Rotate, Vertical }
 
