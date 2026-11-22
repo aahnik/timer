@@ -7,3 +7,6 @@ local.properties
 .DS_Store
 screenshots/
 *.hprof
+docs/demo.mp4
+tools/
+.promo-work/
