@@ -80,6 +80,7 @@ private const val MAX_MINUTES = 60
 private const val TACHOMETER_START = -135f
 private const val TACHOMETER_SPAN = 270f
 private const val FLOOD_SCALE_SPAN = 0.76f
+private const val ROLL_DEAD_ZONE = 15f
 
 private enum class DragMode { Rotate, Vertical }
 
@@ -212,14 +213,20 @@ private fun TimerScreen(
     val gravityState = rememberGravity()
     val gravity by gravityState
     val orientation by rememberDeviceOrientation()
-    var phoneRoll by remember { mutableFloatStateOf(0f) }
+    var unwrappedRoll by remember { mutableFloatStateOf(0f) }
+    var rollTarget by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(gravityState) {
         snapshotFlow { gravityState.value }.collect { reading ->
             if (hypot(reading.x, reading.y) < 3f) return@collect
             val rawRoll = Math.toDegrees(atan2(reading.x, reading.y).toDouble()).toFloat()
-            phoneRoll += ((rawRoll - phoneRoll) % 360f + 540f) % 360f - 180f
+            unwrappedRoll += ((rawRoll - unwrappedRoll) % 360f + 540f) % 360f - 180f
+            val nearestSide = (unwrappedRoll / 90f).roundToInt() * 90f
+            val offSide = unwrappedRoll - nearestSide
+            val easedOffSide = if (abs(offSide) < ROLL_DEAD_ZONE) 0f else Math.signum(offSide) * (abs(offSide) - ROLL_DEAD_ZONE) * 45f / (45f - ROLL_DEAD_ZONE)
+            rollTarget = nearestSide + easedOffSide
         }
     }
+    val phoneRoll by animateFloatAsState(rollTarget, spring(dampingRatio = 0.9f, stiffness = 28f))
     val floodZeroAtBottom by animateFloatAsState(if (orientation == 0 || orientation == 90) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 120f))
     var totalMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
     var remainingMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
