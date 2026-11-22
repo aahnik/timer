@@ -17,7 +17,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -52,7 +51,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
@@ -64,7 +62,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,21 +72,21 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private const val MAX_MINUTES = 60
 private const val TACHOMETER_START = -135f
 private const val TACHOMETER_SPAN = 270f
-private const val FLOOD_PORTRAIT_SCALE_SPAN = 0.76f
-private const val FLOOD_LANDSCAPE_SCALE_SPAN = 0.84f
+private const val FLOOD_SCALE_SPAN = 0.76f
 
 private enum class DragMode { Rotate, Vertical }
 
 private enum class DialStyle(
     val dragMode: DragMode = DragMode.Rotate,
     val minutesPerTurn: Float = 60f,
-    val parallax: Boolean = true,
+    val floatsWithPhone: Boolean = true,
     val circular: Boolean = false,
 ) {
     Chronograph(circular = true),
@@ -97,9 +94,9 @@ private enum class DialStyle(
     Tachometer(minutesPerTurn = MAX_MINUTES * 360f / TACHOMETER_SPAN, circular = true),
     DotMatrix(circular = true),
     Drum(DragMode.Vertical),
-    Flood(DragMode.Vertical, parallax = false),
+    Flood(DragMode.Vertical, floatsWithPhone = false),
     Flip(DragMode.Vertical),
-    Hourglass(DragMode.Vertical, parallax = false),
+    Hourglass(DragMode.Vertical, floatsWithPhone = false),
     Moon(circular = true),
 }
 
@@ -108,14 +105,7 @@ private enum class Face(val background: Color, val ink: Color, val red: Color) {
     Black(Color(0xFF000000), Color(0xFFEDEDED), Color(0xFFE5322D)),
 }
 
-private data class Gravity(val x: Float, val y: Float, val z: Float) {
-    fun inUserFrame(orientation: Int) = when (orientation) {
-        90 -> Gravity(y, -x, z)
-        180 -> Gravity(-x, -y, z)
-        270 -> Gravity(-y, x, z)
-        else -> this
-    }
-}
+private data class Gravity(val x: Float, val y: Float, val z: Float)
 
 private data class DialFrame(
     val remainingMinutes: Float,
@@ -129,6 +119,8 @@ private data class DialFrame(
     val red: Color,
     val floodLevel: Float,
     val surfaceSlope: Float,
+    val phoneRoll: Float,
+    val floodZeroAtBottom: Float,
     val wavePhase: Float,
     val waveAmplitude: Float,
 )
@@ -179,26 +171,6 @@ private fun rememberDeviceOrientation(): State<Int> {
 }
 
 @Composable
-private fun RotatedFrame(quarterTurns: Int, rotation: Float, settle: Float, modifier: Modifier, content: @Composable () -> Unit) {
-    Layout(content, modifier) { measurables, constraints ->
-        val width = constraints.maxWidth
-        val height = constraints.maxHeight
-        val childConstraints = if (quarterTurns % 2 != 0) Constraints.fixed(height, width) else Constraints.fixed(width, height)
-        val placeables = measurables.map { it.measure(childConstraints) }
-        layout(width, height) {
-            placeables.forEach { placeable ->
-                placeable.placeWithLayer((width - placeable.width) / 2, (height - placeable.height) / 2) {
-                    rotationZ = rotation
-                    scaleX = settle
-                    scaleY = settle
-                    alpha = ((settle - 0.86f) / 0.14f).coerceIn(0.4f, 1f)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun rememberGravity(): State<Gravity> {
     val context = LocalContext.current
     val gravity = remember { mutableStateOf(Gravity(0f, 9.8f, 0f)) }
@@ -237,21 +209,18 @@ private fun TimerScreen(
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val textMeasurer = rememberTextMeasurer(cacheSize = 64)
-    val gravity by rememberGravity()
+    val gravityState = rememberGravity()
+    val gravity by gravityState
     val orientation by rememberDeviceOrientation()
-    val userGravity = gravity.inUserFrame(orientation)
-    var contentRotationTarget by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(orientation) {
-        val delta = ((-orientation - contentRotationTarget) % 360f + 540f) % 360f - 180f
-        contentRotationTarget += delta
+    var phoneRoll by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(gravityState) {
+        snapshotFlow { gravityState.value }.collect { reading ->
+            if (hypot(reading.x, reading.y) < 3f) return@collect
+            val rawRoll = Math.toDegrees(atan2(reading.x, reading.y).toDouble()).toFloat()
+            phoneRoll += ((rawRoll - phoneRoll) % 360f + 540f) % 360f - 180f
+        }
     }
-    val contentRotation by animateFloatAsState(contentRotationTarget, spring(dampingRatio = 0.72f, stiffness = 120f))
-    val rotationSettle = remember { Animatable(1f) }
-    LaunchedEffect(orientation) {
-        rotationSettle.animateTo(0.88f, tween(180, easing = FastOutSlowInEasing))
-        rotationSettle.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 180f))
-    }
-    val quarterTurns = Math.floorMod(-orientation / 90, 4)
+    val floodZeroAtBottom by animateFloatAsState(if (orientation == 0 || orientation == 90) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 120f))
     var totalMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
     var remainingMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
     var running by rememberSaveable { mutableStateOf(false) }
@@ -348,11 +317,8 @@ private fun TimerScreen(
 
     fun dragBy(previous: Offset, current: Offset, area: IntSize, pixelsPerMinute: Float) {
         if (dialStyle == DialStyle.Flood) {
-            if (area.width > area.height) {
-                applyDragMinutes((previous.x - current.x) / (area.width * FLOOD_LANDSCAPE_SCALE_SPAN / MAX_MINUTES))
-            } else {
-                applyDragMinutes((previous.y - current.y) / (area.height * FLOOD_PORTRAIT_SCALE_SPAN / MAX_MINUTES))
-            }
+            val upIncreases = if (orientation == 0 || orientation == 90) 1f else -1f
+            applyDragMinutes(upIncreases * (previous.y - current.y) / (area.height * FLOOD_SCALE_SPAN / MAX_MINUTES))
             return
         }
         when (dialStyle.dragMode) {
@@ -383,7 +349,7 @@ private fun TimerScreen(
         popDial(0.93f)
     }
 
-    val pouringOut = dialStyle == DialStyle.Flood && finished && (abs(userGravity.x) > 6f || userGravity.y < 2f)
+    val pouringOut = dialStyle == DialStyle.Flood && finished && gravity.y < -4f
     LaunchedEffect(pouringOut) { if (pouringOut) reset() }
 
     fun tapControl(action: () -> Unit) {
@@ -407,16 +373,12 @@ private fun TimerScreen(
                 y += spacing
             }
         }
-        val hourglassStaysPut = dialStyle == DialStyle.Hourglass
-        RotatedFrame(
-            quarterTurns = if (hourglassStaysPut) 0 else quarterTurns,
-            rotation = if (hourglassStaysPut) 0f else contentRotation,
-            settle = rotationSettle.value,
-            modifier = Modifier
+        Canvas(
+            Modifier
                 .fillMaxSize()
                 .graphicsLayer {
                     alpha = dialAppear.value.coerceIn(0f, 1f)
-                    if (dialStyle.parallax) {
+                    if (dialStyle.floatsWithPhone) {
                         val scale = dialPop.value * (0.9f + 0.1f * dialAppear.value)
                         scaleX = scale
                         scaleY = scale
@@ -424,11 +386,8 @@ private fun TimerScreen(
                         rotationY = tiltY
                         cameraDistance = 16 * density
                     }
-                },
-        ) {
-        Canvas(
-            Modifier
-                .fillMaxSize()
+                }
+                .graphicsLayer { rotationZ = if (dialStyle.floatsWithPhone) phoneRoll else 0f }
                 .pointerInput(running, dialStyle) {
                     val pixelsPerMinute = 24.dp.toPx()
                     if (!running) detectDragGestures(
@@ -455,11 +414,9 @@ private fun TimerScreen(
                 ink = lerp(ink, red, finishBlink.value),
                 red = red,
                 floodLevel = floodLevel,
-                surfaceSlope = when {
-                    hourglassStaysPut -> if (orientation % 180 == 0 && abs(gravity.y) > 1f) (gravity.x / gravity.y).coerceIn(-1.2f, 1.2f) else 0f
-                    userGravity.y > 1f -> (userGravity.x / userGravity.y).coerceIn(-1.2f, 1.2f)
-                    else -> 0f
-                },
+                surfaceSlope = if (orientation % 180 == 0 && abs(gravity.y) > 1f) (gravity.x / gravity.y).coerceIn(-1.2f, 1.2f) else 0f,
+                phoneRoll = phoneRoll,
+                floodZeroAtBottom = floodZeroAtBottom,
                 wavePhase = wavePhase,
                 waveAmplitude = waveAmplitude * 6.dp.toPx(),
             )
@@ -493,7 +450,6 @@ private fun TimerScreen(
                     dialRadius() + 8.dp.toPx(),
                 )
             }
-        }
         }
 
         if (controlsAlpha > 0.01f) Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp).graphicsLayer { alpha = controlsAlpha }) {
@@ -711,65 +667,79 @@ private fun rollingValue(value: Float, rollPortion: Float): Float {
 }
 
 private fun DrawScope.drawFlood(frame: DialFrame) {
-    val landscape = size.width > size.height
     val scaleBottom = size.height * 0.9f
-    val scaleTop = scaleBottom - size.height * FLOOD_PORTRAIT_SCALE_SPAN
+    val scaleTop = scaleBottom - size.height * FLOOD_SCALE_SPAN
     val scaleLeft = 24.dp.toPx()
-    val scaleStart = size.width * (1f - FLOOD_LANDSCAPE_SCALE_SPAN) / 2
-    val scaleEnd = size.width - scaleStart
-    val scaleBase = size.height - 24.dp.toPx()
-    val levelY = size.height * (1f - frame.floodLevel)
     val waveLength = 48.dp.toPx()
-
-    fun surfaceY(x: Float) = levelY + frame.surfaceSlope * (x - size.width / 2) + frame.waveAmplitude * sin(x / waveLength + frame.wavePhase)
+    val reach = size.width + size.height
 
     fun drawScale(color: Color) {
         for (minute in 0..MAX_MINUTES) {
-            val length = (if (minute % 5 == 0) 20 else 8).dp.toPx()
-            val tickColor = color.copy(alpha = if (minute % 5 == 0) color.alpha else color.alpha * 0.45f)
-            val tickWidth = (if (minute % 5 == 0) 2f else 1f).dp.toPx()
-            if (landscape) {
-                val x = scaleEnd - (scaleEnd - scaleStart) * minute / MAX_MINUTES
-                drawLine(tickColor, Offset(x, scaleBase), Offset(x, scaleBase - length), tickWidth)
-            } else {
-                val y = scaleBottom - (scaleBottom - scaleTop) * minute / MAX_MINUTES
-                drawLine(tickColor, Offset(scaleLeft, y), Offset(scaleLeft + length, y), tickWidth)
-            }
+            val y = scaleBottom - (scaleBottom - scaleTop) * minute / MAX_MINUTES
+            val isMajor = minute % 5 == 0
+            drawLine(
+                color.copy(alpha = if (isMajor) color.alpha else color.alpha * 0.45f),
+                Offset(scaleLeft, y),
+                Offset(scaleLeft + (if (isMajor) 20 else 8).dp.toPx(), y),
+                (if (isMajor) 2f else 1f).dp.toPx(),
+            )
         }
     }
+
+    val rollRadians = Math.toRadians(-frame.phoneRoll.toDouble())
+    val sinRoll = sin(rollRadians).toFloat()
+    val cosRoll = cos(rollRadians).toFloat()
+    fun filledFraction(depth: Float): Float {
+        val columns = 48
+        var covered = 0f
+        for (column in 0 until columns) {
+            val x = (column + 0.5f) / columns * size.width - size.width / 2
+            val covers = if (abs(cosRoll) < 1e-3f) {
+                if (x * sinRoll > -depth) size.height else 0f
+            } else {
+                val boundary = (-depth - x * sinRoll) / cosRoll
+                if (cosRoll > 0) (size.height / 2 - boundary).coerceIn(0f, size.height) else (boundary + size.height / 2).coerceIn(0f, size.height)
+            }
+            covered += covers
+        }
+        return covered / (columns * size.height)
+    }
+    var low = -reach
+    var high = reach
+    repeat(24) {
+        val middle = (low + high) / 2
+        if (filledFraction(middle) < frame.floodLevel) low = middle else high = middle
+    }
+    val surfaceDepth = (low + high) / 2
+
+    fun surfaceY(x: Float) = center.y - surfaceDepth + frame.waveAmplitude * sin(x / waveLength + frame.wavePhase)
 
     drawScale(frame.ink)
     if (frame.floodLevel > 0.001f) {
         val water = Path().apply {
-            moveTo(0f, size.height)
-            var x = 0f
+            moveTo(center.x - reach, center.y + reach)
+            var x = -reach
             val step = 6.dp.toPx()
-            while (x < size.width) {
-                lineTo(x, surfaceY(x))
+            while (x <= reach) {
+                lineTo(center.x + x, surfaceY(x))
                 x += step
             }
-            lineTo(size.width, surfaceY(size.width))
-            lineTo(size.width, size.height)
+            lineTo(center.x + reach, center.y + reach)
             close()
         }
-        drawPath(water, frame.ink)
-        clipPath(water) { drawScale(frame.background) }
+        rotate(frame.phoneRoll, center) {
+            drawPath(water, frame.ink)
+            clipPath(water) { rotate(-frame.phoneRoll, center) { drawScale(frame.background) } }
+            val buoyX = (((frame.secondsAngle / 360f) % 1f + 1f) % 1f - 0.5f) * size.minDimension * 0.9f
+            drawCircle(frame.red, 6.dp.toPx(), Offset(center.x + buoyX, surfaceY(buoyX)))
+        }
     }
 
-    if (landscape) {
-        val markerX = scaleEnd - (scaleEnd - scaleStart) * frame.remainingMinutes / MAX_MINUTES
-        val markerY = scaleBase - 28.dp.toPx()
-        drawPath(Path().apply { moveTo(markerX, markerY); lineTo(markerX - 8.dp.toPx(), markerY - 12.dp.toPx()); lineTo(markerX + 8.dp.toPx(), markerY - 12.dp.toPx()); close() }, frame.red)
-    } else {
-        val markerY = scaleBottom - (scaleBottom - scaleTop) * frame.remainingMinutes / MAX_MINUTES
-        val markerX = scaleLeft + 28.dp.toPx()
-        drawPath(Path().apply { moveTo(markerX, markerY); lineTo(markerX + 12.dp.toPx(), markerY - 8.dp.toPx()); lineTo(markerX + 12.dp.toPx(), markerY + 8.dp.toPx()); close() }, frame.red)
-    }
-
-    if (frame.running || frame.floodLevel > 0.001f) {
-        val buoyX = size.width * (((frame.secondsAngle / 360f) % 1f + 1f) % 1f)
-        drawCircle(frame.red, 6.dp.toPx(), Offset(buoyX, surfaceY(buoyX).coerceAtMost(size.height - 6.dp.toPx())))
-    }
+    val minuteFraction = frame.remainingMinutes / MAX_MINUTES
+    val markerFraction = frame.floodZeroAtBottom * minuteFraction + (1f - frame.floodZeroAtBottom) * (1f - minuteFraction)
+    val markerY = scaleBottom - (scaleBottom - scaleTop) * markerFraction
+    val markerX = scaleLeft + 28.dp.toPx()
+    drawPath(Path().apply { moveTo(markerX, markerY); lineTo(markerX + 12.dp.toPx(), markerY - 8.dp.toPx()); lineTo(markerX + 12.dp.toPx(), markerY + 8.dp.toPx()); close() }, frame.red)
 }
 
 private fun DrawScope.drawMinuteTicks(
