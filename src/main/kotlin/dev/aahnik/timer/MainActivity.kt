@@ -214,19 +214,21 @@ private fun TimerScreen(
     val gravity by gravityState
     val orientation by rememberDeviceOrientation()
     var unwrappedRoll by remember { mutableFloatStateOf(0f) }
+    var restingSide by remember { mutableFloatStateOf(0f) }
     var rollTarget by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(gravityState) {
         snapshotFlow { gravityState.value }.collect { reading ->
             if (hypot(reading.x, reading.y) < 3f) return@collect
             val rawRoll = Math.toDegrees(atan2(reading.x, reading.y).toDouble()).toFloat()
             unwrappedRoll += ((rawRoll - unwrappedRoll) % 360f + 540f) % 360f - 180f
-            val nearestSide = (unwrappedRoll / 90f).roundToInt() * 90f
-            val offSide = unwrappedRoll - nearestSide
-            val easedOffSide = if (abs(offSide) < ROLL_DEAD_ZONE) 0f else Math.signum(offSide) * (abs(offSide) - ROLL_DEAD_ZONE) * 45f / (45f - ROLL_DEAD_ZONE)
-            rollTarget = nearestSide + easedOffSide
+            while (unwrappedRoll - restingSide >= 90f) restingSide += 90f
+            while (unwrappedRoll - restingSide <= -90f) restingSide -= 90f
+            val turned = unwrappedRoll - restingSide
+            val follow = if (abs(turned) < ROLL_DEAD_ZONE) 0f else Math.signum(turned) * (abs(turned) - ROLL_DEAD_ZONE) * 90f / (90f - ROLL_DEAD_ZONE)
+            rollTarget = restingSide + follow
         }
     }
-    val phoneRoll by animateFloatAsState(rollTarget, spring(dampingRatio = 0.9f, stiffness = 28f))
+    val phoneRoll by animateFloatAsState(rollTarget, spring(dampingRatio = 1f, stiffness = 90f))
     val floodZeroAtBottom by animateFloatAsState(if (orientation == 0 || orientation == 90) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 120f))
     var totalMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
     var remainingMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
