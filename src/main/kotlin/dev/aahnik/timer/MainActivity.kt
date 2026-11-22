@@ -177,7 +177,7 @@ private fun rememberDeviceOrientation(): State<Int> {
 }
 
 @Composable
-private fun RotatedFrame(quarterTurns: Int, rotation: Float, modifier: Modifier, content: @Composable () -> Unit) {
+private fun RotatedFrame(quarterTurns: Int, rotation: Float, settle: Float, modifier: Modifier, content: @Composable () -> Unit) {
     Layout(content, modifier) { measurables, constraints ->
         val width = constraints.maxWidth
         val height = constraints.maxHeight
@@ -185,7 +185,12 @@ private fun RotatedFrame(quarterTurns: Int, rotation: Float, modifier: Modifier,
         val placeables = measurables.map { it.measure(childConstraints) }
         layout(width, height) {
             placeables.forEach { placeable ->
-                placeable.placeWithLayer((width - placeable.width) / 2, (height - placeable.height) / 2) { rotationZ = rotation }
+                placeable.placeWithLayer((width - placeable.width) / 2, (height - placeable.height) / 2) {
+                    rotationZ = rotation
+                    scaleX = settle
+                    scaleY = settle
+                    alpha = ((settle - 0.86f) / 0.14f).coerceIn(0.4f, 1f)
+                }
             }
         }
     }
@@ -238,7 +243,12 @@ private fun TimerScreen(
         val delta = ((-orientation - contentRotationTarget) % 360f + 540f) % 360f - 180f
         contentRotationTarget += delta
     }
-    val contentRotation by animateFloatAsState(contentRotationTarget, tween(400, easing = FastOutSlowInEasing))
+    val contentRotation by animateFloatAsState(contentRotationTarget, spring(dampingRatio = 0.72f, stiffness = 120f))
+    val rotationSettle = remember { Animatable(1f) }
+    LaunchedEffect(orientation) {
+        rotationSettle.animateTo(0.88f, tween(180, easing = FastOutSlowInEasing))
+        rotationSettle.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 180f))
+    }
     val quarterTurns = Math.floorMod(-orientation / 90, 4)
     var totalMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
     var remainingMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
@@ -391,6 +401,7 @@ private fun TimerScreen(
         RotatedFrame(
             quarterTurns = if (hourglassStaysPut) 0 else quarterTurns,
             rotation = if (hourglassStaysPut) 0f else contentRotation,
+            settle = rotationSettle.value,
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
@@ -475,9 +486,7 @@ private fun TimerScreen(
         }
         }
 
-        if (controlsAlpha > 0.01f) RotatedFrame(quarterTurns, contentRotation, Modifier.fillMaxSize().safeDrawingPadding()) {
-        Box(Modifier.fillMaxSize()) {
-        Row(Modifier.align(Alignment.TopEnd).padding(8.dp).graphicsLayer { alpha = controlsAlpha }) {
+        if (controlsAlpha > 0.01f) Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp).graphicsLayer { alpha = controlsAlpha }) {
             IconControl("Next dial", { tapControl(onNextDial) }) {
                 drawCircle(background, 14.dp.toPx())
                 drawCircle(ink.copy(alpha = 0.5f), 10.dp.toPx(), style = Stroke(1.5.dp.toPx()))
@@ -501,8 +510,6 @@ private fun TimerScreen(
                 drawArc(Face.Black.background, 270f, 180f, true, topLeft, Size(iconRadius * 2, iconRadius * 2))
                 drawCircle(ink.copy(alpha = 0.5f), iconRadius, style = Stroke(1.5.dp.toPx()))
             }
-        }
-        }
         }
     }
 }
@@ -639,7 +646,7 @@ private fun DrawScope.drawDrum(frame: DialFrame, textMeasurer: TextMeasurer) {
     val minutesValue = rollingValue(remainingSeconds / 60f, 0.3f / 60f)
     val secondsValue = if (frame.sweepSeconds) remainingSeconds % 60f else rollingValue(remainingSeconds % 60f, 0.3f)
     val drumRadius = size.minDimension * 0.42f
-    val columnGap = size.width * 0.2f
+    val columnGap = size.minDimension * 0.2f
     val digitStyle = TextStyle(fontSize = 104.sp, fontWeight = FontWeight.Light, fontFeatureSettings = "tnum")
     val windowHalfHeight = 72.dp.toPx()
 
@@ -655,9 +662,9 @@ private fun DrawScope.drawDrum(frame: DialFrame, textMeasurer: TextMeasurer) {
     drawPath(Path().apply { moveTo(pointerDepth, center.y); lineTo(0f, center.y - pointerHeight); lineTo(0f, center.y + pointerHeight); close() }, frame.red)
     drawPath(Path().apply { moveTo(size.width - pointerDepth, center.y); lineTo(size.width, center.y - pointerHeight); lineTo(size.width, center.y + pointerHeight); close() }, frame.red)
 
-    val barY = center.y + drumRadius + 32.dp.toPx()
-    val barStart = size.width * 0.15f
-    val barEnd = size.width * 0.85f
+    val barY = minOf(center.y + drumRadius + 32.dp.toPx(), size.height - 24.dp.toPx())
+    val barStart = center.x - size.minDimension * 0.35f
+    val barEnd = center.x + size.minDimension * 0.35f
     drawLine(frame.ink.copy(alpha = 0.12f), Offset(barStart, barY), Offset(barEnd, barY), 2.dp.toPx())
     drawLine(frame.red, Offset(barStart, barY), Offset(barStart + (barEnd - barStart) * frame.elapsedFraction, barY), 2.dp.toPx())
 }
@@ -694,9 +701,13 @@ private fun rollingValue(value: Float, rollPortion: Float): Float {
 }
 
 private fun DrawScope.drawFlood(frame: DialFrame) {
+    val landscape = size.width > size.height
     val scaleTop = size.height * 0.14f
     val scaleBottom = size.height * 0.9f
     val scaleLeft = 24.dp.toPx()
+    val scaleStart = size.width * 0.08f
+    val scaleEnd = size.width * 0.92f
+    val scaleBase = size.height - 24.dp.toPx()
     val levelY = size.height * (1f - frame.floodLevel)
     val waveLength = 48.dp.toPx()
 
@@ -704,9 +715,16 @@ private fun DrawScope.drawFlood(frame: DialFrame) {
 
     fun drawScale(color: Color) {
         for (minute in 0..MAX_MINUTES) {
-            val y = scaleBottom - (scaleBottom - scaleTop) * minute / MAX_MINUTES
             val length = (if (minute % 5 == 0) 20 else 8).dp.toPx()
-            drawLine(color.copy(alpha = if (minute % 5 == 0) color.alpha else color.alpha * 0.45f), Offset(scaleLeft, y), Offset(scaleLeft + length, y), (if (minute % 5 == 0) 2f else 1f).dp.toPx())
+            val tickColor = color.copy(alpha = if (minute % 5 == 0) color.alpha else color.alpha * 0.45f)
+            val tickWidth = (if (minute % 5 == 0) 2f else 1f).dp.toPx()
+            if (landscape) {
+                val x = scaleEnd - (scaleEnd - scaleStart) * minute / MAX_MINUTES
+                drawLine(tickColor, Offset(x, scaleBase), Offset(x, scaleBase - length), tickWidth)
+            } else {
+                val y = scaleBottom - (scaleBottom - scaleTop) * minute / MAX_MINUTES
+                drawLine(tickColor, Offset(scaleLeft, y), Offset(scaleLeft + length, y), tickWidth)
+            }
         }
     }
 
@@ -728,9 +746,15 @@ private fun DrawScope.drawFlood(frame: DialFrame) {
         clipPath(water) { drawScale(frame.background) }
     }
 
-    val markerY = scaleBottom - (scaleBottom - scaleTop) * frame.remainingMinutes / MAX_MINUTES
-    val markerX = scaleLeft + 28.dp.toPx()
-    drawPath(Path().apply { moveTo(markerX, markerY); lineTo(markerX + 12.dp.toPx(), markerY - 8.dp.toPx()); lineTo(markerX + 12.dp.toPx(), markerY + 8.dp.toPx()); close() }, frame.red)
+    if (landscape) {
+        val markerX = scaleEnd - (scaleEnd - scaleStart) * frame.remainingMinutes / MAX_MINUTES
+        val markerY = scaleBase - 28.dp.toPx()
+        drawPath(Path().apply { moveTo(markerX, markerY); lineTo(markerX - 8.dp.toPx(), markerY - 12.dp.toPx()); lineTo(markerX + 8.dp.toPx(), markerY - 12.dp.toPx()); close() }, frame.red)
+    } else {
+        val markerY = scaleBottom - (scaleBottom - scaleTop) * frame.remainingMinutes / MAX_MINUTES
+        val markerX = scaleLeft + 28.dp.toPx()
+        drawPath(Path().apply { moveTo(markerX, markerY); lineTo(markerX + 12.dp.toPx(), markerY - 8.dp.toPx()); lineTo(markerX + 12.dp.toPx(), markerY + 8.dp.toPx()); close() }, frame.red)
+    }
 
     if (frame.running || frame.floodLevel > 0.001f) {
         val buoyX = size.width * (((frame.secondsAngle / 360f) % 1f + 1f) % 1f)
@@ -795,12 +819,13 @@ private fun pointOnCircle(degreesFromTop: Float, radius: Float): Offset {
 
 private fun DrawScope.drawFlipClock(frame: DialFrame, textMeasurer: TextMeasurer) {
     val remainingSeconds = frame.remainingMinutes * 60f
-    val cardWidth = size.width * 0.38f
+    val cardWidth = size.minDimension * 0.38f
     val cardSize = Size(cardWidth, cardWidth * 1.25f)
-    val cardOffset = size.width * 0.03f + cardWidth / 2
+    val cardOffset = size.minDimension * 0.03f + cardWidth / 2
     val digitStyle = TextStyle(fontSize = 104.sp, fontWeight = FontWeight.Light, fontFeatureSettings = "tnum")
-    drawFlipCard(textMeasurer, rollingValue(remainingSeconds / 60f, 0.35f / 60f), wraps = false, center - Offset(cardOffset, 0f), cardSize, digitStyle, frame)
-    drawFlipCard(textMeasurer, rollingValue(remainingSeconds % 60f, 0.35f), wraps = true, center + Offset(cardOffset, 0f), cardSize, digitStyle, frame)
+    val flipPortion = if (frame.sweepSeconds) 0.95f else 0.35f
+    drawFlipCard(textMeasurer, rollingValue(remainingSeconds / 60f, flipPortion / 60f), wraps = false, center - Offset(cardOffset, 0f), cardSize, digitStyle, frame)
+    drawFlipCard(textMeasurer, rollingValue(remainingSeconds % 60f, flipPortion), wraps = true, center + Offset(cardOffset, 0f), cardSize, digitStyle, frame)
     drawCircle(frame.red, 5.dp.toPx(), center - Offset(0f, 20.dp.toPx()))
     drawCircle(frame.red, 5.dp.toPx(), center + Offset(0f, 20.dp.toPx()))
 
@@ -896,10 +921,22 @@ private fun DrawScope.drawHourglass(frame: DialFrame) {
 
     if (frame.running && sandLeft < 1f) {
         val streamBottom = bottomSurface - 10.dp.toPx() * sandLeft.coerceAtMost(0.5f) * 2
-        drawLine(frame.red, center, Offset(center.x, streamBottom), 1.5.dp.toPx())
-        repeat(6) { grain ->
-            val progress = ((frame.wavePhase / (2 * PI.toFloat())) * 4f + grain / 6f) % 1f
-            drawCircle(frame.red, 2.5.dp.toPx(), Offset(center.x, center.y + (streamBottom - center.y) * progress))
+        if (frame.sweepSeconds) {
+            drawLine(frame.red, center, Offset(center.x, streamBottom), 1.5.dp.toPx())
+            repeat(6) { grain ->
+                val progress = ((frame.wavePhase / (2 * PI.toFloat())) * 4f + grain / 6f) % 1f
+                drawCircle(frame.red, 2.5.dp.toPx(), Offset(center.x, center.y + (streamBottom - center.y) * progress))
+            }
+        } else {
+            val sinceTick = 1f - (frame.remainingMinutes * 60f) % 1f
+            val fall = (sinceTick / 0.7f).coerceIn(0f, 1f).let { it * it }
+            if (sinceTick < 0.75f) {
+                repeat(5) { grain ->
+                    val trail = grain * 0.035f
+                    val progress = (fall - trail).coerceIn(0f, 1f)
+                    drawCircle(frame.red.copy(alpha = 1f - grain * 0.15f), (2.8f - grain * 0.3f).dp.toPx(), Offset(center.x, center.y + (streamBottom - center.y) * progress))
+                }
+            }
         }
     }
 
