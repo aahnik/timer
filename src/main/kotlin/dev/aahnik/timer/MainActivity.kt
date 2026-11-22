@@ -7,6 +7,7 @@ import android.hardware.SensorManager
 import android.media.RingtoneManager
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.OrientationEventListener
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -16,6 +17,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -47,8 +49,10 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
@@ -60,6 +64,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,17 +88,16 @@ private enum class DialStyle(
     val dragMode: DragMode = DragMode.Rotate,
     val minutesPerTurn: Float = 60f,
     val parallax: Boolean = true,
-    val fullScreenFinish: Boolean = false,
     val circular: Boolean = false,
 ) {
     Chronograph(circular = true),
     Bezel(circular = true),
     Tachometer(minutesPerTurn = MAX_MINUTES * 360f / TACHOMETER_SPAN, circular = true),
     DotMatrix(circular = true),
-    Drum(DragMode.Vertical, fullScreenFinish = true),
-    Flood(DragMode.Vertical, parallax = false, fullScreenFinish = true),
-    Flip(DragMode.Vertical, fullScreenFinish = true),
-    Hourglass(DragMode.Vertical, parallax = false, fullScreenFinish = true),
+    Drum(DragMode.Vertical),
+    Flood(DragMode.Vertical, parallax = false),
+    Flip(DragMode.Vertical),
+    Hourglass(DragMode.Vertical, parallax = false),
     Moon(circular = true),
 }
 
@@ -102,7 +106,14 @@ private enum class Face(val background: Color, val ink: Color, val red: Color) {
     Black(Color(0xFF000000), Color(0xFFEDEDED), Color(0xFFE5322D)),
 }
 
-private data class Gravity(val x: Float, val y: Float, val z: Float)
+private data class Gravity(val x: Float, val y: Float, val z: Float) {
+    fun inUserFrame(orientation: Int) = when (orientation) {
+        90 -> Gravity(y, -x, z)
+        180 -> Gravity(-x, -y, z)
+        270 -> Gravity(-y, x, z)
+        else -> this
+    }
+}
 
 private data class DialFrame(
     val remainingMinutes: Float,
@@ -147,6 +158,40 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+private fun rememberDeviceOrientation(): State<Int> {
+    val context = LocalContext.current
+    val orientation = remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        val listener = object : OrientationEventListener(context) {
+            override fun onOrientationChanged(degrees: Int) {
+                if (degrees == ORIENTATION_UNKNOWN) return
+                val nearest = (degrees + 45) / 90 % 4 * 90
+                val distance = abs(((degrees - nearest + 540) % 360) - 180)
+                if (distance < 30 && nearest != orientation.intValue) orientation.intValue = nearest
+            }
+        }
+        listener.enable()
+        onDispose { listener.disable() }
+    }
+    return orientation
+}
+
+@Composable
+private fun RotatedFrame(quarterTurns: Int, rotation: Float, modifier: Modifier, content: @Composable () -> Unit) {
+    Layout(content, modifier) { measurables, constraints ->
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val childConstraints = if (quarterTurns % 2 != 0) Constraints.fixed(height, width) else Constraints.fixed(width, height)
+        val placeables = measurables.map { it.measure(childConstraints) }
+        layout(width, height) {
+            placeables.forEach { placeable ->
+                placeable.placeWithLayer((width - placeable.width) / 2, (height - placeable.height) / 2) { rotationZ = rotation }
+            }
+        }
+    }
+}
+
+@Composable
 private fun rememberGravity(): State<Gravity> {
     val context = LocalContext.current
     val gravity = remember { mutableStateOf(Gravity(0f, 9.8f, 0f)) }
@@ -186,6 +231,15 @@ private fun TimerScreen(
     val scope = rememberCoroutineScope()
     val textMeasurer = rememberTextMeasurer(cacheSize = 64)
     val gravity by rememberGravity()
+    val orientation by rememberDeviceOrientation()
+    val userGravity = gravity.inUserFrame(orientation)
+    var contentRotationTarget by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(orientation) {
+        val delta = ((-orientation - contentRotationTarget) % 360f + 540f) % 360f - 180f
+        contentRotationTarget += delta
+    }
+    val contentRotation by animateFloatAsState(contentRotationTarget, tween(400, easing = FastOutSlowInEasing))
+    val quarterTurns = Math.floorMod(-orientation / 90, 4)
     var totalMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
     var remainingMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
     var running by rememberSaveable { mutableStateOf(false) }
@@ -259,10 +313,12 @@ private fun TimerScreen(
 
     LaunchedEffect(finished) {
         if (!finished) return@LaunchedEffect
-        repeat(3) {
+        repeat(2) {
             haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-            finishBlink.animateTo(1f, tween(120))
-            finishBlink.animateTo(0f, tween(280))
+            finishBlink.animateTo(1f, tween(140))
+            delay(220)
+            finishBlink.animateTo(0f, tween(260))
+            delay(120)
         }
     }
 
@@ -307,7 +363,7 @@ private fun TimerScreen(
         popDial(0.93f)
     }
 
-    val pouringOut = dialStyle == DialStyle.Flood && finished && (abs(gravity.x) > 6f || gravity.y < 2f)
+    val pouringOut = dialStyle == DialStyle.Flood && finished && (abs(userGravity.x) > 6f || userGravity.y < 2f)
     LaunchedEffect(pouringOut) { if (pouringOut) reset() }
 
     fun tapControl(action: () -> Unit) {
@@ -325,14 +381,17 @@ private fun TimerScreen(
             while (y < size.height + spacing) {
                 var x = startX
                 while (x < size.width + spacing) {
-                    drawCircle(ink.copy(alpha = 0.07f), 1.2.dp.toPx(), Offset(x, y))
+                    drawCircle(lerp(ink, red, finishBlink.value).copy(alpha = 0.07f), 1.2.dp.toPx(), Offset(x, y))
                     x += spacing
                 }
                 y += spacing
             }
         }
-        Canvas(
-            Modifier
+        val hourglassStaysPut = dialStyle == DialStyle.Hourglass
+        RotatedFrame(
+            quarterTurns = if (hourglassStaysPut) 0 else quarterTurns,
+            rotation = if (hourglassStaysPut) 0f else contentRotation,
+            modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
                     alpha = dialAppear.value.coerceIn(0f, 1f)
@@ -344,7 +403,11 @@ private fun TimerScreen(
                         rotationY = tiltY
                         cameraDistance = 16 * density
                     }
-                }
+                },
+        ) {
+        Canvas(
+            Modifier
+                .fillMaxSize()
                 .pointerInput(running, dialStyle) {
                     val pixelsPerMinute = 24.dp.toPx()
                     if (!running) detectDragGestures(
@@ -368,10 +431,14 @@ private fun TimerScreen(
                 running = running,
                 sweepSeconds = sweepSeconds,
                 background = background,
-                ink = ink,
+                ink = lerp(ink, red, finishBlink.value),
                 red = red,
                 floodLevel = floodLevel,
-                surfaceSlope = if (gravity.y > 1f) (gravity.x / gravity.y).coerceIn(-1.2f, 1.2f) else 0f,
+                surfaceSlope = when {
+                    hourglassStaysPut -> if (orientation % 180 == 0 && abs(gravity.y) > 1f) (gravity.x / gravity.y).coerceIn(-1.2f, 1.2f) else 0f
+                    userGravity.y > 1f -> (userGravity.x / userGravity.y).coerceIn(-1.2f, 1.2f)
+                    else -> 0f
+                },
                 wavePhase = wavePhase,
                 waveAmplitude = waveAmplitude * 6.dp.toPx(),
             )
@@ -387,7 +454,15 @@ private fun TimerScreen(
                 DialStyle.Drum -> drawDrum(frame, textMeasurer)
                 DialStyle.Flood -> drawFlood(frame)
                 DialStyle.Flip -> drawFlipClock(frame, textMeasurer)
-                DialStyle.Hourglass -> drawHourglass(frame)
+                DialStyle.Hourglass -> {
+                    val (flipX, flipY) = when (orientation) {
+                        90 -> 1f to -1f
+                        180 -> -1f to -1f
+                        270 -> -1f to 1f
+                        else -> 1f to 1f
+                    }
+                    withTransform({ scale(flipX, flipY, center) }) { drawHourglass(frame) }
+                }
                 DialStyle.Moon -> drawMoon(frame)
             }
             if (dialStyle.circular) {
@@ -397,16 +472,12 @@ private fun TimerScreen(
                     dialRadius() + 8.dp.toPx(),
                 )
             }
-            if (finishBlink.value > 0f) {
-                if (dialStyle.fullScreenFinish) {
-                    drawRect(red.copy(alpha = 0.35f * finishBlink.value))
-                } else {
-                    drawCircle(red.copy(alpha = finishBlink.value), dialRadius() + 12.dp.toPx(), style = Stroke(4.dp.toPx()))
-                }
-            }
+        }
         }
 
-        if (controlsAlpha > 0.01f) Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp).graphicsLayer { alpha = controlsAlpha }) {
+        if (controlsAlpha > 0.01f) RotatedFrame(quarterTurns, contentRotation, Modifier.fillMaxSize().safeDrawingPadding()) {
+        Box(Modifier.fillMaxSize()) {
+        Row(Modifier.align(Alignment.TopEnd).padding(8.dp).graphicsLayer { alpha = controlsAlpha }) {
             IconControl("Next dial", { tapControl(onNextDial) }) {
                 drawCircle(background, 14.dp.toPx())
                 drawCircle(ink.copy(alpha = 0.5f), 10.dp.toPx(), style = Stroke(1.5.dp.toPx()))
@@ -430,6 +501,8 @@ private fun TimerScreen(
                 drawArc(Face.Black.background, 270f, 180f, true, topLeft, Size(iconRadius * 2, iconRadius * 2))
                 drawCircle(ink.copy(alpha = 0.5f), iconRadius, style = Stroke(1.5.dp.toPx()))
             }
+        }
+        }
         }
     }
 }
