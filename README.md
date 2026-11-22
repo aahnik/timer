@@ -1,0 +1,28 @@
+# Timer
+
+A minimal analog countdown timer for Android, built with Kotlin and Jetpack Compose in a single file.
+
+https://github.com/aahnik/timer/raw/main/docs/demo.mp4
+
+[Watch the demo](docs/demo.mp4) · [Download the APK](apk/timer.apk)
+
+## Dials
+
+Chronograph, Bezel, Tachometer, Dot matrix, Drum, Flood, Flip clock, Hourglass and Moon. Every dial uses the same cream or black face with a red accent.
+
+## Controls
+
+- Drag the dial to set 1 to 60 minutes. Drum, Flood, Flip clock and Hourglass are set by dragging up or down.
+- Tap to start or pause. Long-press to reset.
+- The top-right buttons switch the dial, the seconds hand (ticking or sweeping) and the face colour.
+- The app goes full screen while the timer runs and plays a chime when it ends.
+- Tilt the phone to lean the dial in 3D. In Flood and Hourglass the surface stays level, and in Flood you can tip the phone to pour the ink out once time is up.
+
+## Build
+
+```
+./gradlew assembleRelease
+adb install build/outputs/apk/release/timer-release.apk
+```
+
+The demo video is recorded from an emulator with `tools/record_demo.sh`.
