@@ -120,7 +120,7 @@ private data class DialFrame(
     val red: Color,
     val floodLevel: Float,
     val surfaceSlope: Float,
-    val phoneRoll: Float,
+    val liquidRoll: Float,
     val floodZeroAtBottom: Float,
     val wavePhase: Float,
     val waveAmplitude: Float,
@@ -181,7 +181,7 @@ private fun rememberGravity(): State<Gravity> {
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 val previous = gravity.value
-                val smoothing = 0.15f
+                val smoothing = 0.3f
                 gravity.value = Gravity(
                     previous.x + (event.values[0] - previous.x) * smoothing,
                     previous.y + (event.values[1] - previous.y) * smoothing,
@@ -229,6 +229,7 @@ private fun TimerScreen(
         }
     }
     val phoneRoll by animateFloatAsState(rollTarget, spring(dampingRatio = 1f, stiffness = 90f))
+    val liquidRoll by animateFloatAsState(unwrappedRoll, spring(dampingRatio = 0.55f, stiffness = 500f))
     val floodZeroAtBottom by animateFloatAsState(if (orientation == 0 || orientation == 90) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 120f))
     var totalMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
     var remainingMillis by rememberSaveable { mutableLongStateOf(5 * 60_000L) }
@@ -424,7 +425,7 @@ private fun TimerScreen(
                 red = red,
                 floodLevel = floodLevel,
                 surfaceSlope = if (orientation % 180 == 0 && abs(gravity.y) > 1f) (gravity.x / gravity.y).coerceIn(-1.2f, 1.2f) else 0f,
-                phoneRoll = phoneRoll,
+                liquidRoll = liquidRoll,
                 floodZeroAtBottom = floodZeroAtBottom,
                 wavePhase = wavePhase,
                 waveAmplitude = waveAmplitude * 6.dp.toPx(),
@@ -695,7 +696,7 @@ private fun DrawScope.drawFlood(frame: DialFrame) {
         }
     }
 
-    val rollRadians = Math.toRadians(-frame.phoneRoll.toDouble())
+    val rollRadians = Math.toRadians(-frame.liquidRoll.toDouble())
     val sinRoll = sin(rollRadians).toFloat()
     val cosRoll = cos(rollRadians).toFloat()
     fun filledFraction(depth: Float): Float {
@@ -736,9 +737,9 @@ private fun DrawScope.drawFlood(frame: DialFrame) {
             lineTo(center.x + reach, center.y + reach)
             close()
         }
-        rotate(frame.phoneRoll, center) {
+        rotate(frame.liquidRoll, center) {
             drawPath(water, frame.ink)
-            clipPath(water) { rotate(-frame.phoneRoll, center) { drawScale(frame.background) } }
+            clipPath(water) { rotate(-frame.liquidRoll, center) { drawScale(frame.background) } }
             val buoyX = (((frame.secondsAngle / 360f) % 1f + 1f) % 1f - 0.5f) * size.minDimension * 0.9f
             drawCircle(frame.red, 6.dp.toPx(), Offset(center.x + buoyX, surfaceY(buoyX)))
         }
