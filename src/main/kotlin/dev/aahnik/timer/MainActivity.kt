@@ -316,28 +316,19 @@ private fun TimerScreen(
     }
 
     Box(Modifier.fillMaxSize().background(background)) {
-        if (dialStyle.parallax) {
-            Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = dialAppear.value.coerceIn(0f, 1f) }) {
-                val gridShift = Offset(-tiltY, tiltX) * 2.5.dp.toPx()
-                val spacing = 28.dp.toPx()
-                val startX = ((gridShift.x % spacing) + spacing) % spacing - spacing
-                val startY = ((gridShift.y % spacing) + spacing) % spacing - spacing
-                var y = startY
-                while (y < size.height + spacing) {
-                    var x = startX
-                    while (x < size.width + spacing) {
-                        drawCircle(ink.copy(alpha = 0.07f), 1.2.dp.toPx(), Offset(x, y))
-                        x += spacing
-                    }
-                    y += spacing
+        Canvas(Modifier.fillMaxSize()) {
+            val gridShift = Offset(-tiltY, tiltX) * 2.5.dp.toPx()
+            val spacing = 28.dp.toPx()
+            val startX = ((gridShift.x % spacing) + spacing) % spacing - spacing
+            val startY = ((gridShift.y % spacing) + spacing) % spacing - spacing
+            var y = startY
+            while (y < size.height + spacing) {
+                var x = startX
+                while (x < size.width + spacing) {
+                    drawCircle(ink.copy(alpha = 0.07f), 1.2.dp.toPx(), Offset(x, y))
+                    x += spacing
                 }
-                if (dialStyle.circular) {
-                    val shadowCenter = center + Offset(tiltY, -tiltX) * 1.4.dp.toPx() + Offset(0f, 14.dp.toPx())
-                    val shadowRadius = dialRadius() * dialPop.value
-                    repeat(10) { ring ->
-                        drawCircle(Color.Black.copy(alpha = 0.022f), shadowRadius + ring * 4.dp.toPx(), shadowCenter)
-                    }
-                }
+                y += spacing
             }
         }
         Canvas(
