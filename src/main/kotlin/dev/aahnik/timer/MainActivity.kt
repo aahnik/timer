@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -83,16 +84,17 @@ private enum class DialStyle(
     val minutesPerTurn: Float = 60f,
     val parallax: Boolean = true,
     val fullScreenFinish: Boolean = false,
+    val circular: Boolean = false,
 ) {
-    Chronograph,
-    Bezel,
-    Tachometer(minutesPerTurn = MAX_MINUTES * 360f / TACHOMETER_SPAN),
-    DotMatrix,
+    Chronograph(circular = true),
+    Bezel(circular = true),
+    Tachometer(minutesPerTurn = MAX_MINUTES * 360f / TACHOMETER_SPAN, circular = true),
+    DotMatrix(circular = true),
     Drum(DragMode.Vertical, fullScreenFinish = true),
     Flood(DragMode.Vertical, parallax = false, fullScreenFinish = true),
     Flip(DragMode.Vertical, fullScreenFinish = true),
     Hourglass(DragMode.Vertical, parallax = false, fullScreenFinish = true),
-    Moon,
+    Moon(circular = true),
 }
 
 private enum class Face(val background: Color, val ink: Color, val red: Color) {
@@ -203,8 +205,8 @@ private fun TimerScreen(
     )
     val floodLevel by animateFloatAsState(elapsedFraction, if (running) snap() else tween(900))
     val waveAmplitude by animateFloatAsState(if (running) 1f else 0.3f, tween(600))
-    val tiltX by animateFloatAsState(((gravity.z - 5f) * 3.5f).coerceIn(-25f, 25f), spring(dampingRatio = 0.7f, stiffness = 200f))
-    val tiltY by animateFloatAsState((-gravity.x * 4f).coerceIn(-25f, 25f), spring(dampingRatio = 0.7f, stiffness = 200f))
+    val tiltX by animateFloatAsState(((gravity.z - 5f) * 4.2f).coerceIn(-30f, 30f), spring(dampingRatio = 0.7f, stiffness = 200f))
+    val tiltY by animateFloatAsState((-gravity.x * 4.8f).coerceIn(-30f, 30f), spring(dampingRatio = 0.7f, stiffness = 200f))
     val dialIconRotation by animateFloatAsState(dialStyle.ordinal * 90f, spring(dampingRatio = 0.6f, stiffness = 300f))
     val ambient = rememberInfiniteTransition()
     val wavePhase by ambient.animateFloat(0f, 2 * PI.toFloat(), infiniteRepeatable(tween(2_400, easing = LinearEasing)))
@@ -314,6 +316,30 @@ private fun TimerScreen(
     }
 
     Box(Modifier.fillMaxSize().background(background)) {
+        if (dialStyle.parallax) {
+            Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = dialAppear.value.coerceIn(0f, 1f) }) {
+                val gridShift = Offset(-tiltY, tiltX) * 2.5.dp.toPx()
+                val spacing = 28.dp.toPx()
+                val startX = ((gridShift.x % spacing) + spacing) % spacing - spacing
+                val startY = ((gridShift.y % spacing) + spacing) % spacing - spacing
+                var y = startY
+                while (y < size.height + spacing) {
+                    var x = startX
+                    while (x < size.width + spacing) {
+                        drawCircle(ink.copy(alpha = 0.07f), 1.2.dp.toPx(), Offset(x, y))
+                        x += spacing
+                    }
+                    y += spacing
+                }
+                if (dialStyle.circular) {
+                    val shadowCenter = center + Offset(tiltY, -tiltX) * 1.4.dp.toPx() + Offset(0f, 14.dp.toPx())
+                    val shadowRadius = dialRadius() * dialPop.value
+                    repeat(10) { ring ->
+                        drawCircle(Color.Black.copy(alpha = 0.022f), shadowRadius + ring * 4.dp.toPx(), shadowCenter)
+                    }
+                }
+            }
+        }
         Canvas(
             Modifier
                 .fillMaxSize()
@@ -358,6 +384,10 @@ private fun TimerScreen(
                 wavePhase = wavePhase,
                 waveAmplitude = waveAmplitude * 6.dp.toPx(),
             )
+            if (dialStyle.circular) {
+                drawCircle(background, dialRadius() + 8.dp.toPx())
+                drawCircle(ink.copy(alpha = 0.18f), dialRadius() + 8.dp.toPx(), style = Stroke(1.dp.toPx()))
+            }
             when (dialStyle) {
                 DialStyle.Chronograph -> drawChronograph(frame)
                 DialStyle.Bezel -> drawBezel(frame)
@@ -368,6 +398,13 @@ private fun TimerScreen(
                 DialStyle.Flip -> drawFlipClock(frame, textMeasurer)
                 DialStyle.Hourglass -> drawHourglass(frame)
                 DialStyle.Moon -> drawMoon(frame)
+            }
+            if (dialStyle.circular) {
+                val glareCenter = center + Offset(-tiltY, -tiltX) / 30f * dialRadius() * 0.7f
+                drawCircle(
+                    Brush.radialGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent), glareCenter, dialRadius() * 0.9f),
+                    dialRadius() + 8.dp.toPx(),
+                )
             }
             if (finishBlink.value > 0f) {
                 if (dialStyle.fullScreenFinish) {
