@@ -2,8 +2,6 @@
 
 A minimal analog countdown timer for Android, built with Kotlin and Jetpack Compose in a single file.
 
-![Timer promo](docs/promo.gif)
-
 [Download the APK](apk/timer.apk)
 
 ## Dials
@@ -16,7 +14,7 @@ Chronograph, Bezel, Tachometer, Dot matrix, Drum, Flood, Flip clock, Hourglass a
 - Tap to start or pause. Long-press to reset.
 - The top-right buttons switch the dial, the seconds hand (ticking or sweeping) and the face colour.
 - The app goes full screen while the timer runs and plays a chime when it ends.
-- Tilt the phone and the dial leans up to 15° over a moving dot grid. In Flood and Hourglass the surface stays level, and in Flood you can tip the phone to pour the ink out once time is up.
+- Turn the phone to any side, including upside down, and the dial turns to face you. Tilt it and the dial leans up to 15° over a moving dot grid. In Flood and Hourglass the surface stays level, and in Flood you can tip the phone to pour the ink out once time is up.
 
 ## Build
 
