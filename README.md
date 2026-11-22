@@ -2,8 +2,6 @@
 
 A minimal analog countdown timer for Android, built with Kotlin and Jetpack Compose in a single file.
 
-https://github.com/aahnik/timer/raw/main/docs/demo.mp4
-
 [Watch the demo](docs/demo.mp4) · [Download the APK](apk/timer.apk)
 
 ## Dials
